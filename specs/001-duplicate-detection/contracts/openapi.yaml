@@ -1,0 +1,177 @@
+openapi: 3.0.3
+info:
+  title: Duplicate Detection API
+  description: |
+    Microservice for semantic duplicate/paraphrase detection of Polis comments.
+    All operations are scoped to a single conversation (zid).
+    Fail-open: internal errors must not cause callers to block comments.
+  version: 0.1.0
+
+servers:
+  - url: http://localhost:8000
+    description: Local
+
+paths:
+  /check:
+    post:
+      summary: Check comment for semantic duplicates
+      description: |
+        Accepts conversation id and comment text; returns similarity tier (block/warn/related/allow)
+        and list of similar comments. Caller should treat timeout/5xx as "allow".
+        Recommended client timeout: 2 seconds; treat no response within that time as allow (fail-open).
+      operationId: checkDuplicate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CheckRequest'
+      responses:
+        '200':
+          description: Check result; use tier and similar_comments to enforce block/warn/allow
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckResponse'
+        '400':
+          description: Invalid input (e.g. missing zid or txt, txt empty or too long)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      tags:
+        - duplicate-check
+  /store:
+    post:
+      summary: Store embedding for a comment
+      description: |
+        Store embedding for (zid, tid, txt) after comment is accepted.
+        Idempotent for same (zid, tid).
+      operationId: storeEmbedding
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StoreRequest'
+      responses:
+        '200':
+          description: Stored successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StoreResponse'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      tags:
+        - store
+  /health:
+    get:
+      summary: Health or readiness
+      description: For deployment/load balancer; does not perform heavy checks.
+      operationId: health
+      responses:
+        '200':
+          description: Service is up
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+      tags:
+        - health
+
+components:
+  schemas:
+    CheckRequest:
+      type: object
+      required:
+        - zid
+        - txt
+      properties:
+        zid:
+          type: integer
+          description: Conversation id
+        txt:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          description: Comment text to check
+    CheckResponse:
+      type: object
+      required:
+        - tier
+        - similar_comments
+      properties:
+        tier:
+          type: string
+          enum: [block, warn, related, allow]
+        similar_comments:
+          type: array
+          items:
+            $ref: '#/components/schemas/SimilarComment'
+    SimilarComment:
+      type: object
+      properties:
+        tid:
+          type: integer
+        txt:
+          type: string
+        similarity:
+          type: number
+          format: float
+        tier:
+          type: string
+          enum: [block, warn, related]
+    StoreRequest:
+      type: object
+      required:
+        - zid
+        - tid
+        - txt
+      properties:
+        zid:
+          type: integer
+        tid:
+          type: integer
+        description: Comment id within conversation
+        txt:
+          type: string
+          minLength: 1
+          maxLength: 1000
+    StoreResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+    Error:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+        detail:
+          type: string
+
+tags:
+  - name: duplicate-check
+    description: Check comment for semantic duplicates
+  - name: store
+    description: Store embedding after comment accepted
+  - name: health
+    description: Health/readiness
